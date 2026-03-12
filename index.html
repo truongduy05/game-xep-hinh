@@ -722,55 +722,132 @@
     /**
      * Drag and Drop Logic
      */
-    function handlePointerDown(e) {
-        if (GameState.isGameOver) return;
-        
-        const shapeEl = e.currentTarget;
-        const slotIndex = parseInt(shapeEl.dataset.slotIndex);
-        const shapeDef = GameState.trayBlocks[slotIndex];
-        
-        if (!shapeDef) return;
+   // Cập nhật DragState để lưu tham chiếu khối gốc
+const DragState = {
+    active: false,
+    element: null,
+    originalShapeEl: null,  // ← THÊM DÒNG NÀY
+    shape: null,
+    slotIndex: -1,
+    offsetX: 0,
+    offsetY: 0,
+    currentBoardX: -1,
+    currentBoardY: -1,
+    cellSize: 0,
+    boardRect: null
+};
 
-        // Init audio on first interaction if needed
-        AudioSys.init();
+// Cập nhật handlePointerDown (dòng 725-772)
+function handlePointerDown(e) {
+    if (GameState.isGameOver) return;
+    
+    const shapeEl = e.currentTarget;
+    const slotIndex = parseInt(shapeEl.dataset.slotIndex);
+    const shapeDef = GameState.trayBlocks[slotIndex];
+    
+    if (!shapeDef) return;
 
-        DragState.active = true;
-        DragState.shape = shapeDef;
-        DragState.slotIndex = slotIndex;
-        
-        // Calculate cell size based on current board
-        const boardWidth = els.board.offsetWidth;
-        const gap = 2;
-        DragState.cellSize = (boardWidth - (7 * gap)) / 8;
-        DragState.boardRect = els.board.getBoundingClientRect();
+    AudioSys.init();
 
-        // Create draggable clone
-        const clone = createShapeElement(shapeDef);
-        clone.classList.add('dragged-shape');
-        
-        // Hide original
-        shapeEl.style.opacity = '0';
+    DragState.active = true;
+    DragState.shape = shapeDef;
+    DragState.slotIndex = slotIndex;
+    DragState.originalShapeEl = shapeEl;  // ← LƯU THAM CHIẾU KHỐI GỐC
+    
+    // Calculate cell size based on current board
+    const boardWidth = els.board.offsetWidth;
+    const gap = 2;
+    DragState.cellSize = (boardWidth - (7 * gap)) / 8;
+    DragState.boardRect = els.board.getBoundingClientRect();
 
-        // Calculate offset so finger doesn't cover the block on mobile
-        const isTouch = e.pointerType === 'touch';
-        
-        // Center of the shape logic
-        const shapeWidth = shapeDef.matrix[0].length * DragState.cellSize + (shapeDef.matrix[0].length - 1) * gap;
-        const shapeHeight = shapeDef.matrix.length * DragState.cellSize + (shapeDef.matrix.length - 1) * gap;
-        
-        DragState.offsetX = shapeWidth / 2;
-        DragState.offsetY = isTouch ? shapeHeight + 40 : shapeHeight / 2; // Offset higher on touch
+    // Create draggable clone
+    const clone = createShapeElement(shapeDef);
+    clone.classList.add('dragged-shape');
+    
+    // Hide original
+    shapeEl.style.opacity = '0';
 
-        updateDragPosition(e.clientX, e.clientY, clone);
-        
-        els.dragContainer.appendChild(clone);
-        DragState.element = clone;
+    // Calculate offset so finger doesn't cover the block on mobile
+    const isTouch = e.pointerType === 'touch';
+    
+    // Center of the shape logic
+    const shapeWidth = shapeDef.matrix[0].length * DragState.cellSize + (shapeDef.matrix[0].length - 1) * gap;
+    const shapeHeight = shapeDef.matrix.length * DragState.cellSize + (shapeDef.matrix.length - 1) * gap;
+    
+    DragState.offsetX = shapeWidth / 2;
+    DragState.offsetY = isTouch ? shapeHeight + 40 : shapeHeight / 2;
 
-        document.addEventListener('pointermove', handlePointerMove, { passive: false });
-        document.addEventListener('pointerup', handlePointerUp);
-        document.addEventListener('pointercancel', handlePointerUp);
+    updateDragPosition(e.clientX, e.clientY, clone);
+    
+    els.dragContainer.appendChild(clone);
+    DragState.element = clone;
+
+    document.addEventListener('pointermove', handlePointerMove, { passive: false });
+    document.addEventListener('pointerup', handlePointerUp);
+    document.addEventListener('pointercancel', handlePointerUp);
+}
+
+// Cập nhật handlePointerUp (dòng 824-883)
+function handlePointerUp(e) {
+    if (!DragState.active) return;
+
+    document.removeEventListener('pointermove', handlePointerMove);
+    document.removeEventListener('pointerup', handlePointerUp);
+    document.removeEventListener('pointercancel', handlePointerUp);
+
+    // Clear preview
+    document.querySelectorAll('.cell').forEach(c => {
+        c.classList.remove('preview-valid', 'preview-invalid');
+    });
+
+    const shape = DragState.shape.matrix;
+    const color = DragState.shape.color;
+    const startX = DragState.currentBoardX;
+    const startY = DragState.currentBoardY;
+
+    if (canPlaceShape(shape, startX, startY)) {
+        // Place shape
+        placeShape(shape, color, startX, startY);
+        AudioSys.sfxPlace();
+        
+        // Remove from tray
+        GameState.trayBlocks[DragState.slotIndex] = null;
+        els.traySlots[DragState.slotIndex].innerHTML = '';
+        
+        // Clean up drag element immediately
+        if (DragState.element) DragState.element.remove();
+        
+        // Check for clears
+        checkLines();
+        
+        // Respawn tray if needed
+        generateTray();
+    } else {
+        // Snap back animation
+        AudioSys.sfxInvalid();
+        
+        if (DragState.element && DragState.originalShapeEl) {
+            const rect = DragState.originalShapeEl.getBoundingClientRect();
+            DragState.element.style.transition = 'all 0.2s ease-out';
+            DragState.element.style.left = `${rect.left}px`;
+            DragState.element.style.top = `${rect.top}px`;
+            DragState.element.style.transform = 'scale(0.6)';
+            
+            setTimeout(() => {
+                DragState.originalShapeEl.style.opacity = '1';  // ← PHỤC HỒI KHỐI GỐC
+                if (DragState.element) DragState.element.remove();
+            }, 200);
+        } else {
+            if (DragState.element) DragState.element.remove();
+        }
     }
 
+    DragState.active = false;
+    DragState.element = null;
+    DragState.originalShapeEl = null;  // ← RESET
+    DragState.currentBoardX = -1;
+    DragState.currentBoardY = -1;
+}
     function handlePointerMove(e) {
         if (!DragState.active) return;
         e.preventDefault(); // Prevent scrolling
@@ -1107,3 +1184,4 @@
         });
     }
 </script>
+
